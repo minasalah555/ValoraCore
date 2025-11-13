@@ -6,6 +6,9 @@ namespace Valora.Models
 {
     public class Order : BaseModel
     {
+        [MaxLength(50)]
+        public string? OrderNumber { get; set; }
+
         [ForeignKey("User")]
         [Required]
         public string UserID { get; set; }

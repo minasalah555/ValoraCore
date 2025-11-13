@@ -4,7 +4,7 @@ using Valora.Repositories;
 
 namespace Valora.Services
 {
-    public class CategoryServices
+    public class CategoryServices : ICategoryServices
     {
         private readonly ICategoryRepository _categoryRepo;
 

@@ -2,9 +2,9 @@
 {
     public class CartItemViewModel
     {
-        public string USerId { get; set; }
-        public int cartId { get; set; }
-        public int productId { get; set; }
-         public int quantity { get; set; }
+        public string UserId { get; set; }
+        public int CartId { get; set; }
+        public int ProductId { get; set; }
+        public int Quantity { get; set; }
     }
 }
