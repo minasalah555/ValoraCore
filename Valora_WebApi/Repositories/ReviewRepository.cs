@@ -27,8 +27,7 @@ namespace Valora.Repositories
             {
                 ReviewId = review.ID,
                 ProductId = review.ProductID,
-                ProductName = review.Product?.GetType().GetProperty("Name")?.GetValue(review.Product)?.ToString() ?? "Product",
-                UserId = review.UserID,
+                ProductName = review.Product?.Name ?? "Product",
                 UserName = review.User?.UserName ?? "Anonymous",
                 Rating = review.Rating,
                 Title = review.Title,
@@ -51,8 +50,7 @@ namespace Valora.Repositories
             {
                 ReviewId = review.ID,
                 ProductId = review.ProductID,
-                ProductName = review.Product?.GetType().GetProperty("Name")?.GetValue(review.Product)?.ToString() ?? "Product",
-                UserId = review.UserID,
+                ProductName = review.Product?.Name ?? "Product",
                 UserName = review.User?.UserName ?? "Anonymous",
                 Rating = review.Rating,
                 Title = review.Title,
@@ -76,8 +74,7 @@ namespace Valora.Repositories
             {
                 ReviewId = review.ID,
                 ProductId = review.ProductID,
-                ProductName = review.Product?.GetType().GetProperty("Name")?.GetValue(review.Product)?.ToString() ?? "Product",
-                UserId = review.UserID,
+                ProductName = review.Product?.Name ?? "Product",
                 UserName = review.User?.UserName ?? "Anonymous",
                 Rating = review.Rating,
                 Title = review.Title,

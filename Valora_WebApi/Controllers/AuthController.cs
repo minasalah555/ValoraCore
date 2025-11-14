@@ -1,12 +1,10 @@
+using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
+using Valora.DTOs.Auth;
 using Valora.Models;
-using Valora.ViewModels;
+using Valora.Services;
 
 namespace Valora.Controllers
 {
@@ -17,247 +15,178 @@ namespace Valora.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly RoleManager<ApplicationRole> _roleManager;
-        private readonly IConfiguration _configuration;
+        private readonly IJwtTokenService _jwtTokenService;
+        private readonly IMapper _mapper;
+        private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             RoleManager<ApplicationRole> roleManager,
-            IConfiguration configuration)
+            IJwtTokenService jwtTokenService,
+            IMapper mapper,
+            ILogger<AuthController> logger)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _roleManager = roleManager;
-            _configuration = configuration;
+            _jwtTokenService = jwtTokenService;
+            _mapper = mapper;
+            _logger = logger;
         }
 
-        // POST: api/Auth/Register
-        [HttpPost("Register")]
-        public async Task<IActionResult> Register([FromBody] RegisterUserViewModel model)
+        /// <summary>
+        /// Register a new user
+        /// </summary>
+        [HttpPost("register")]
+        [ProducesResponseType(typeof(AuthResponseDTO), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> Register([FromBody] RegisterRequestDTO model)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            var user = new ApplicationUser
-            {
-                UserName = model.UserName,
-                Email = model.Email
-            };
+            // Check if user already exists
+            var existingUser = await _userManager.FindByNameAsync(model.UserName);
+            if (existingUser != null)
+                return BadRequest(new { message = "Username already exists" });
+
+            var existingEmail = await _userManager.FindByEmailAsync(model.Email);
+            if (existingEmail != null)
+                return BadRequest(new { message = "Email already exists" });
+
+            // Map DTO to entity
+            var user = _mapper.Map<ApplicationUser>(model);
 
             var result = await _userManager.CreateAsync(user, model.Password);
 
-            if (result.Succeeded)
+            if (!result.Succeeded)
+                return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
+
+            // Ensure User role exists
+            await EnsureRoleExistsAsync("User");
+            
+            // Add default User role
+            await _userManager.AddToRoleAsync(user, "User");
+
+            _logger.LogInformation("User {UserName} registered successfully", user.UserName);
+
+            // Generate token
+            var token = await _jwtTokenService.GenerateTokenAsync(user);
+            var roles = await _userManager.GetRolesAsync(user);
+
+            var userDto = _mapper.Map<UserDTO>(user);
+            userDto.Roles = roles;
+
+            var response = new AuthResponseDTO
             {
-                // Add default role
-                await _userManager.AddToRoleAsync(user, "User");
+                Token = token,
+                ExpiresAt = _jwtTokenService.GetTokenExpiration(),
+                User = userDto
+            };
 
-                return Ok(new
-                {
-                    message = "User registered successfully",
-                    userId = user.Id,
-                    userName = user.UserName,
-                    email = user.Email
-                });
-            }
-
-            return BadRequest(result.Errors);
+            return Ok(response);
         }
 
-        // POST: api/Auth/Login
-        [HttpPost("Login")]
-        public async Task<IActionResult> Login([FromBody] LoginUserViewModel model)
+        /// <summary>
+        /// Login - Auto-assigns Admin role if username is "admin"
+        /// </summary>
+        [HttpPost("login")]
+        [ProducesResponseType(typeof(AuthResponseDTO), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> Login([FromBody] LoginRequestDTO model)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
             var user = await _userManager.FindByNameAsync(model.UserName);
             if (user == null)
-                return Unauthorized(new { message = "Invalid username or password" });
+                return Unauthorized(new { message = "Invalid credentials" });
 
-            var result = await _signInManager.CheckPasswordSignInAsync(user, model.Password, false);
+            var result = await _signInManager.CheckPasswordSignInAsync(user, model.Password, lockoutOnFailure: false);
 
-            if (result.Succeeded)
+            if (!result.Succeeded)
+                return Unauthorized(new { message = "Invalid credentials" });
+
+            // Auto-assign Admin role if username is "admin"
+            if (user.UserName?.Equals("admin", StringComparison.OrdinalIgnoreCase) == true)
             {
-                var token = await GenerateJwtToken(user);
-                var roles = await _userManager.GetRolesAsync(user);
-
-                return Ok(new
+                await EnsureRoleExistsAsync("Admin");
+                
+                var isAdmin = await _userManager.IsInRoleAsync(user, "Admin");
+                if (!isAdmin)
                 {
-                    token = token,
-                    userId = user.Id,
-                    userName = user.UserName,
-                    email = user.Email,
-                    roles = roles
-                });
+                    await _userManager.AddToRoleAsync(user, "Admin");
+                    _logger.LogInformation("Admin role automatically assigned to user: {UserName}", user.UserName);
+                }
             }
 
-            return Unauthorized(new { message = "Invalid username or password" });
+            // Generate JWT token with roles
+            var token = await _jwtTokenService.GenerateTokenAsync(user);
+            var roles = await _userManager.GetRolesAsync(user);
+
+            var userDto = _mapper.Map<UserDTO>(user);
+            userDto.Roles = roles;
+
+            var response = new AuthResponseDTO
+            {
+                Token = token,
+                ExpiresAt = _jwtTokenService.GetTokenExpiration(),
+                User = userDto
+            };
+
+            _logger.LogInformation("User {UserName} logged in successfully", user.UserName);
+
+            return Ok(response);
         }
 
-        // POST: api/Auth/Logout
-        [HttpPost("Logout")]
+        /// <summary>
+        /// Get current user information
+        /// </summary>
+        [HttpGet("me")]
         [Authorize]
+        [ProducesResponseType(typeof(UserDTO), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> GetCurrentUser()
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized();
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            var roles = await _userManager.GetRolesAsync(user);
+            var userDto = _mapper.Map<UserDTO>(user);
+            userDto.Roles = roles;
+
+            return Ok(userDto);
+        }
+
+        /// <summary>
+        /// Logout
+        /// </summary>
+        [HttpPost("logout")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> Logout()
         {
             await _signInManager.SignOutAsync();
             return Ok(new { message = "Logged out successfully" });
         }
 
-        // POST: api/Auth/AddRole (Admin assigns role to a specific user)
-        [HttpPost("AddRole")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> AddRoleToUser([FromBody] AddRoleToUserViewModel model)
+        /// <summary>
+        /// Helper method to ensure role exists
+        /// </summary>
+        private async Task EnsureRoleExistsAsync(string roleName)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var roleExists = await _roleManager.RoleExistsAsync(model.RoleName);
-            if (!roleExists)
-                return BadRequest(new { message = "Role does not exist" });
-
-            var user = await _userManager.FindByIdAsync(model.UserId);
-            if (user == null)
-                return NotFound(new { message = "User not found" });
-
-            // Check if user already has this role
-            var hasRole = await _userManager.IsInRoleAsync(user, model.RoleName);
-            if (hasRole)
-                return BadRequest(new { message = $"User already has the '{model.RoleName}' role" });
-
-            var result = await _userManager.AddToRoleAsync(user, model.RoleName);
-
-            if (result.Succeeded)
+            if (!await _roleManager.RoleExistsAsync(roleName))
             {
-                return Ok(new { message = $"Role '{model.RoleName}' added to user '{user.UserName}' successfully" });
+                await _roleManager.CreateAsync(new ApplicationRole { Name = roleName });
+                _logger.LogInformation("Role {RoleName} created automatically", roleName);
             }
-
-            return BadRequest(result.Errors);
-        }
-
-        // POST: api/Auth/RequestRole (Any authenticated user can request a role for themselves)
-        [HttpPost("RequestRole")]
-        [Authorize]
-        public async Task<IActionResult> RequestRole([FromBody] AddRoleViewModel model)
-        {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var roleExists = await _roleManager.RoleExistsAsync(model.RoleName);
-            if (!roleExists)
-                return BadRequest(new { message = "Role does not exist" });
-
-            // Prevent users from self-assigning Admin role
-            if (model.RoleName.Equals("Admin", StringComparison.OrdinalIgnoreCase))
-                return Forbid("Cannot self-assign Admin role");
-
-            // Get the currently authenticated user's ID from the JWT token
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-                return Unauthorized(new { message = "User not authenticated" });
-
-            var user = await _userManager.FindByIdAsync(userId);
-            if (user == null)
-                return NotFound(new { message = "User not found" });
-
-            // Check if user already has this role
-            var hasRole = await _userManager.IsInRoleAsync(user, model.RoleName);
-            if (hasRole)
-                return BadRequest(new { message = $"You already have the '{model.RoleName}' role" });
-
-            var result = await _userManager.AddToRoleAsync(user, model.RoleName);
-
-            if (result.Succeeded)
-            {
-                return Ok(new { message = $"Role '{model.RoleName}' added successfully" });
-            }
-
-            return BadRequest(result.Errors);
-        }
-
-        // POST: api/Auth/MakeAdmin (Temporary endpoint for development - remove in production)
-        [HttpPost("MakeAdmin")]
-        [AllowAnonymous]
-        public async Task<IActionResult> MakeAdmin([FromBody] MakeAdminViewModel model)
-        {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
-
-            var user = await _userManager.FindByNameAsync(model.UserName);
-            if (user == null)
-                return NotFound(new { message = "User not found" });
-
-            // Check if already admin
-            var isAdmin = await _userManager.IsInRoleAsync(user, "Admin");
-            if (isAdmin)
-                return BadRequest(new { message = "User is already an Admin" });
-
-            var result = await _userManager.AddToRoleAsync(user, "Admin");
-
-            if (result.Succeeded)
-            {
-                return Ok(new
-                {
-                    message = $"User '{user.UserName}' is now an Admin. Please login again to get new JWT token with Admin role.",
-                    userId = user.Id,
-                    userName = user.UserName,
-                    email = user.Email
-                });
-            }
-
-            return BadRequest(result.Errors);
-        }
-
-        // GET: api/Auth/User/{id}
-        [HttpGet("User/{id}")]
-        [Authorize]
-        public async Task<IActionResult> GetUser(string id)
-        {
-            var user = await _userManager.FindByIdAsync(id);
-            if (user == null)
-                return NotFound(new { message = "User not found" });
-
-            var roles = await _userManager.GetRolesAsync(user);
-
-            return Ok(new
-            {
-                userId = user.Id,
-                userName = user.UserName,
-                email = user.Email,
-                roles = roles
-            });
-        }
-
-        // Helper method to generate JWT token
-        private async Task<string> GenerateJwtToken(ApplicationUser user)
-        {
-            var roles = await _userManager.GetRolesAsync(user);
-            var claims = new List<Claim>
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, user.Id),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-                new Claim(ClaimTypes.NameIdentifier, user.Id),
-                new Claim(ClaimTypes.Name, user.UserName ?? ""),
-                new Claim(ClaimTypes.Email, user.Email ?? "")
-            };
-
-            foreach (var role in roles)
-            {
-                claims.Add(new Claim(ClaimTypes.Role, role));
-            }
-
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"] ?? "YourSecretKeyHere123456789012345678901234567890"));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-            var expires = DateTime.Now.AddDays(Convert.ToDouble(_configuration["Jwt:ExpireDays"] ?? "7"));
-
-            var token = new JwtSecurityToken(
-                issuer: _configuration["Jwt:Issuer"],
-                audience: _configuration["Jwt:Audience"],
-                claims: claims,
-                expires: expires,
-                signingCredentials: creds
-            );
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
         }
     }
 }
