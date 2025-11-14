@@ -46,7 +46,7 @@ namespace Valora.Controllers
 
         // GET: api/Categories/5/Products
         [HttpGet("{id}/Products")]
-        public async Task<ActionResult> GetCategoryWithProducts(int id)
+        public async Task<ActionResult<CategoryWithProductsDTO>> GetCategoryWithProducts(int id)
         {
             var category = await _categoryServices.GetCategoryWithProducts(id);
 
@@ -55,7 +55,9 @@ namespace Valora.Controllers
                 return NotFound(new { message = "Category not found" });
             }
 
-            return Ok(category);
+            // ? Map to DTO to prevent circular reference
+            var categoryWithProductsDTO = _mapper.Map<CategoryWithProductsDTO>(category);
+            return Ok(categoryWithProductsDTO);
         }
 
         // POST: api/Categories
@@ -84,6 +86,11 @@ namespace Valora.Controllers
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
+
+            if (id != categoryDTO.Id)
+            {
+                return BadRequest(new { message = "ID mismatch" });
+            }
 
             var existingCategory = await _categoryServices.GetById(id);
             if (existingCategory == null)

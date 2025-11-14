@@ -96,6 +96,7 @@ namespace Valora_WebApi
             builder.Services.AddScoped<ICartServices, CartServices>();
             builder.Services.AddScoped<OrderService>();
             builder.Services.AddScoped<ReviewService>();
+            builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 
             builder.Services.AddControllers();
 
