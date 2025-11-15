@@ -168,6 +168,30 @@ namespace Valora.Controllers
         {
             try
             {
+                // Get current user's ID from JWT token
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                // Verify the order belongs to the current user (unless admin)
+                var order = await _orderService.GetOrderDetails(orderId);
+                if (order == null)
+                {
+                    return NotFound(new { message = "Order not found" });
+                }
+
+                // Check if user owns the order or is admin
+                if (order.UserId != userId && !User.IsInRole("Admin"))
+                {
+                    return Forbid();
+                }
+
+                // Check if order can be cancelled (only Pending/Processing orders)
+                if (order.OrderStatus == "Shipped" || order.OrderStatus == "Delivered" || order.OrderStatus == "Cancelled")
+                {
+                    return BadRequest(new { message = $"Cannot cancel order with status '{order.OrderStatus}'" });
+                }
+
                 var result = await _orderService.CancelOrder(orderId);
                 if (result)
                 {

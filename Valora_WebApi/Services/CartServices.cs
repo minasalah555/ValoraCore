@@ -70,9 +70,8 @@ namespace Valora.Services
 
         public async Task<CartDTO> showTheCartPerUser(string UserID)
         {
-            var cart = await _cartRepository.GetCartByUserId(UserID);
-            if (cart == null) return new CartDTO();
-            return MapCart(cart);
+            var cartDto = await _cartRepository.ShowTheCartByUserId(UserID);
+            return cartDto ?? new CartDTO { UserId = UserID };
         }
 
         // Backwards-compatible adapter used by controllers
@@ -94,15 +93,22 @@ namespace Valora.Services
 
         private static CartDTO MapCart(Cart cart)
         {
+            var items = (cart.CartItems ?? new List<CartItem>()).Select(ci => new CartItemDTO
+            {
+                ProductId = ci.ProductID,
+                ProductName = ci.Product?.Name ?? "Unknown",
+                ProductPrice = ci.Product != null ? (decimal)ci.Product.Price : 0m,
+                ProductImage = ci.Product?.ImgUrl,
+                Quantity = ci.Quantity
+            }).ToList();
+
             return new CartDTO
             {
                 CartId = cart.ID,
                 UserId = cart.UserID,
-                Items = (cart.CartItems ?? new List<CartItem>()).Select(ci => new CartItemDTO
-                {
-                    ProductId = ci.ProductID,
-                    Quantity = ci.Quantity
-                }).ToList()
+                Items = items,
+                TotalAmount = items.Sum(i => i.SubTotal),
+                ItemCount = items.Sum(i => i.Quantity)
             };
         }
     }

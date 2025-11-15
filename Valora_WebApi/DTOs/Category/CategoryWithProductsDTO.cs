@@ -11,6 +11,6 @@ namespace Valora.DTOs.Category
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public List<ProductReadDTO> Products { get; set; } = new List<ProductReadDTO>();
-        public int ProductCount => Products?.Count ?? 0;
+        public int ProductCount => Products?.Count ?? 0; 
     }
 }
