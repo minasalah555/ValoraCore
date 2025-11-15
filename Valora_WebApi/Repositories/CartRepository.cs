@@ -86,18 +86,29 @@ namespace Valora.Repositories
 
         public async Task<CartDTO> ShowTheCart(int cartId)
         {
-            var cart = await GetById(cartId);
+            var cart = await Query()
+                .Include(c => c.CartItems)
+                .ThenInclude(ci => ci.Product)
+                .FirstOrDefaultAsync(c => c.ID == cartId && !c.IsDeleted);
+            
             if (cart != null)
             {
+                var items = (cart.CartItems ?? Enumerable.Empty<CartItem>()).Select(item => new CartItemDTO
+                {
+                    ProductId = item.ProductID,
+                    ProductName = item.Product?.Name ?? "Unknown",
+                    ProductPrice = item.Product != null ? (decimal)item.Product.Price : 0m,
+                    ProductImage = item.Product?.ImgUrl,
+                    Quantity = item.Quantity
+                }).ToList();
+
                 var cartDTO = new CartDTO
                 {
                     UserId = cart.UserID,
                     CartId = cart.ID,
-                    Items = (cart.CartItems ?? Enumerable.Empty<CartItem>()).Select(item => new CartItemDTO
-                    {
-                        ProductId = item.ProductID,
-                        Quantity = item.Quantity
-                    }).ToList()
+                    Items = items,
+                    TotalAmount = items.Sum(i => i.SubTotal),
+                    ItemCount = items.Sum(i => i.Quantity)
                 };
                 return cartDTO;
             }
@@ -109,17 +120,32 @@ namespace Valora.Repositories
 
         public async Task<CartDTO> ShowTheCartByUserId(string userId)
         {
-            var cart = await GetCartByUserId(userId);
+            var cart = await Query()
+                .Include(c => c.CartItems)
+                .ThenInclude(ci => ci.Product)
+                .FirstOrDefaultAsync(c => c.UserID == userId && !c.IsDeleted);
+
+            if (cart == null)
+            {
+                return new CartDTO { UserId = userId };
+            }
+
+            var items = (cart.CartItems ?? Enumerable.Empty<CartItem>()).Select(item => new CartItemDTO
+            {
+                ProductId = item.ProductID,
+                ProductName = item.Product?.Name ?? "Unknown",
+                ProductPrice = item.Product != null ? (decimal)item.Product.Price : 0m,
+                ProductImage = item.Product?.ImgUrl,
+                Quantity = item.Quantity
+            }).ToList();
 
             return new CartDTO
             {
                 CartId = cart.ID,
                 UserId = cart.UserID,
-                Items = (cart.CartItems ?? Enumerable.Empty<CartItem>()).Select(item => new CartItemDTO
-                {
-                    ProductId = item.ProductID,
-                    Quantity = item.Quantity
-                }).ToList()
+                Items = items,
+                TotalAmount = items.Sum(i => i.SubTotal),
+                ItemCount = items.Sum(i => i.Quantity)
             };
         }
 
@@ -161,6 +187,7 @@ namespace Valora.Repositories
         {
             var cart = await Query()
                 .Include(c => c.CartItems)
+                .ThenInclude(ci => ci.Product)
                 .FirstOrDefaultAsync(c => c.UserID == userId && !c.IsDeleted);
             if (cart != null)
             {

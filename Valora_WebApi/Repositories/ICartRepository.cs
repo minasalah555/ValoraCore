@@ -9,6 +9,7 @@ namespace Valora.Repositories
     // Adds item(s) to the user's cart. Returns the cart id after the operation (new or existing).
     public Task<int> AddToCart(string userId, int cartId, int productId, int quantity);
        public Task< CartDTO> ShowTheCart(int cartId);
+       public Task<CartDTO> ShowTheCartByUserId(string userId);
         public Task RemoveFromCart(int cartId, int productId, int quantity);
 
         Task<Cart> GetCartByUserId(string userId);
